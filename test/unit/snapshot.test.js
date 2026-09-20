@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { compactElements, detectSite, findSearchBox, approxTokens } from "../../src/snapshot.js";
+import { collectElementsInPage, compactElements, detectSite, findSearchBox, approxTokens } from "../../src/snapshot.js";
 import { buildRequest, encodeElement } from "../../src/jev.js";
 import { MAX_ELEMENTS, MAX_STATE_CHARS } from "../../src/constants.js";
 
@@ -99,4 +99,28 @@ test("findSearchBox prefers role=searchbox / search-ish names", () => {
   ];
   assert.equal(findSearchBox(els), "e02");
   assert.equal(findSearchBox([raw(3)]), null);
+});
+
+test("collectElementsInPage: a secret field's value never becomes its label", async () => {
+  // Runs the in-page collector against a login form in Chromium: the password value must not
+  // survive into the element record that goes to the API, while an ordinary field's does.
+  const { chromium } = await import("playwright");
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const page = await browser.newPage();
+    await page.setContent(`
+      <input type="text" name="username" value="ada@example.com">
+      <input type="password" name="password" value="hunter2-correct-horse">
+      <input type="text" name="card" autocomplete="cc-number" value="4111 1111 1111 1111">
+    `);
+    const data = await page.evaluate(collectElementsInPage);
+    const byName = Object.fromEntries(data.elements.map((e) => [e.inputName, e]));
+    assert.equal(byName.username.text, "ada@example.com");
+    assert.equal(byName.password.text, "password");
+    assert.equal(byName.card.text, "card");
+    assert.ok(!JSON.stringify(data).includes("hunter2-correct-horse"));
+    assert.ok(!JSON.stringify(data).includes("4111 1111 1111 1111"));
+  } finally {
+    await browser.close();
+  }
 });
