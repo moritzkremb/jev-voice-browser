@@ -81,11 +81,18 @@ export function collectElementsInPage() {
       else role = "clickable";
     }
 
+    // A field's current value is a useful label ("jev typesafe" in a search box), but not when
+    // the field holds a secret: that value would travel to the API as this element's name.
+    const autocomplete = (el.getAttribute("autocomplete") || "").toLowerCase();
+    const isSecretField =
+      type === "password" ||
+      /(^|[\s-])(current-password|new-password|one-time-code|cc-number|cc-csc|cc-exp)/.test(autocomplete);
+
     const img = el.querySelector && el.querySelector("img[alt]");
     const name =
       clean(el.getAttribute("aria-label")) ||
       clean(el.innerText) ||
-      clean(el.value) ||
+      (isSecretField ? "" : clean(el.value)) ||
       clean(el.getAttribute("placeholder")) ||
       clean(el.getAttribute("title")) ||
       (img && clean(img.getAttribute("alt"))) ||
