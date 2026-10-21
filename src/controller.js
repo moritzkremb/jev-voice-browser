@@ -3,7 +3,7 @@
  * policy -> Playwright action -> fresh snapshot. Emits events for the UI / demo / tests.
  */
 import { EventEmitter } from "node:events";
-import { DEBOUNCE_MS, SILENCE_COMPLETE_MS, CANDIDATE_TTL_MS, MAX_INFLIGHT, MAX_CONTEXT_ACTIONS, MODEL, T } from "./constants.js";
+import { DEBOUNCE_MS, SILENCE_COMPLETE_MS, CANDIDATE_TTL_MS, CONFIRMATION_TTL_MS, MAX_INFLIGHT, MAX_CONTEXT_ACTIONS, MODEL, T } from "./constants.js";
 import { decide, isAbortError } from "./jev.js";
 import { evaluatePolicy, describe } from "./policy.js";
 import { execute } from "./executor.js";
@@ -27,6 +27,8 @@ export class Controller extends EventEmitter {
     this.utterance = null; // { id, physicalId, prefix, gen, text, final, startedAt, updatedAt, actedOn, actedText }
     this.consumed = null; // { id: physical utterance id, prefix: executed text (lowercase), gen }
     this.pending = null; // destructive action awaiting "confirm"
+    this.pendingExpiresAt = 0;
+    this.pendingTimer = null;
     this.candidates = null; // { list: [{n,id,label}], intent: {type,text}, at }
     this.lastDecision = null;
     this.debounceTimer = null;
@@ -59,6 +61,19 @@ export class Controller extends EventEmitter {
     this.snapshotAt = Date.now();
     this.emit("snapshot", this.snapshot);
     return this.snapshot;
+  }
+
+  _clearPending() {
+    clearTimeout(this.pendingTimer);
+    this.pendingTimer = null;
+    this.pendingExpiresAt = 0;
+    if (!this.pending) return;
+    this.pending = null;
+    this.emit("pending", null);
+  }
+
+  _expirePending() {
+    if (this.pending && Date.now() >= this.pendingExpiresAt) this._clearPending();
   }
 
   /** Typed command fallback: behaves like a final utterance. */
@@ -162,6 +177,7 @@ export class Controller extends EventEmitter {
 
     if (Date.now() - this.snapshotAt > 1500) await this.refreshSnapshot();
 
+    this._expirePending();
     const textAtRequest = utt.text;
     let result;
     try {
@@ -200,6 +216,8 @@ export class Controller extends EventEmitter {
     // but it must never be treated as final/silent — free-text payloads would be truncated.
     const stale = utt.text !== textAtRequest;
     const silentMs = stale ? 0 : Date.now() - utt.updatedAt;
+    // The deadline may have passed while Jev was in flight, even if its timer is delayed.
+    this._expirePending();
     const policy = evaluatePolicy({
       answers: result.answers,
       candidates: result.candidates,
@@ -238,21 +256,22 @@ export class Controller extends EventEmitter {
     switch (policy.decision) {
       case "act":
         this._consume(utt, textAtRequest);
-        if (policy.action.confirmed) this.pending = null;
         this.candidates = null;
         await this._runAction(policy.action, { decision, utterance: utt });
         break;
       case "confirm":
         this._consume(utt, textAtRequest);
+        clearTimeout(this.pendingTimer);
         this.pending = policy.action;
-        await this.browser.overlay("toast", `Say "confirm" to ${describe(policy.action)}`, 6000);
+        this.pendingExpiresAt = Date.now() + CONFIRMATION_TTL_MS;
+        this.pendingTimer = setTimeout(() => this._clearPending(), CONFIRMATION_TTL_MS);
         this.emit("pending", { action: policy.action, summary: policy.summary });
+        await this.browser.overlay("toast", `Say "confirm" to ${describe(policy.action)}`, CONFIRMATION_TTL_MS);
         break;
       case "cancel":
         this._consume(utt, textAtRequest);
-        this.pending = null;
+        this._clearPending();
         await this.browser.overlay("toast", "cancelled");
-        this.emit("pending", null);
         break;
       case "disambiguate": {
         const list = policy.candidates.map((c, i) => ({ n: i + 1, id: c.id, label: c.label, p: c.p }));
@@ -282,6 +301,7 @@ export class Controller extends EventEmitter {
 
   async _runAction(action, meta = {}) {
     this.busy = true;
+    this._clearPending();
     const t0 = Date.now();
     const utt = meta.utterance || this.utterance;
     const pageBefore = this.snapshot ? { url: this.snapshot.url, title: this.snapshot.title, site: this.snapshot.site } : null;
@@ -383,6 +403,7 @@ export class Controller extends EventEmitter {
   }
 
   async close() {
+    this._clearPending();
     clearTimeout(this.debounceTimer);
     clearTimeout(this.silenceTimer);
     for (const r of this.inflight) r.ac.abort();
