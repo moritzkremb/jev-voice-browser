@@ -42,6 +42,7 @@ export const PAYLOAD_SILENCE_MS = 600;
 export const PAYLOAD_INTENTS = new Set(["search_web", "type_into_field", "select_option"]);
 export const HIGHLIGHT_MS = 600; // element flash on the controlled page
 export const CANDIDATE_TTL_MS = 8000; // numbered overlays stay this long
+export const CONFIRMATION_TTL_MS = 10_000; // destructive actions can only be confirmed within this window
 
 // ---------------------------------------------------------------------------
 // Execution policy thresholds (the "why did it act / wait" numbers shown in the UI)
@@ -50,8 +51,7 @@ export const T = {
   intentConfidence: 0.55, // `intent` Choice confidence needed to act at all
   complete: 0.6, // `complete` Noul: user has finished the command (bypassed after SILENCE_COMPLETE_MS)
   isCommand: 0.5, // `is_command` Noul: user is addressing the browser at all
-  destructive: 0.5, // `destructive` Noul above this => needs confirmation ...
-  destructiveIntentConfidence: 0.9, // ... unless intent confidence is this high AND the user already said "confirm"
+  destructive: 0.5, // `destructive` Noul above this => needs spoken confirmation
   targetConfidence: 0.45, // `target` Choice below this => show numbered candidate overlays instead of clicking
   targetTopProb: 0.35, // and the winning element must have at least this probability
   spanConfidence: 0.35, // `text_span` / `url_span` picks below this fall back to the heuristic candidate

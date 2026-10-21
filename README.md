@@ -126,7 +126,8 @@ Policy (`src/policy.js`, thresholds `T` in `constants.js`), shown live in the UI
 5. build the action in code: URL templates, search-box fallback, verbatim span copy
 6. click/type targets need `target.confidence ≥ 0.45` and top probability ≥ 0.35, else the top 2–3
    candidates get numbered overlays in the page and a spoken number picks one (no model call)
-7. `destructive ≥ 0.5` on a click → **confirm** (say "confirm" / "cancel")
+7. `destructive ≥ 0.5` on a click → **confirm** (say "confirm" / "cancel"); the pending action
+   expires after 10 seconds and is cleared when any other action is executed
 
 Requests overlap: up to 2 in flight; older ones are cancelled with `AbortSignal`. A response for a
 partial transcript may still act if the words already commit to a closed-set action ("go back"),
