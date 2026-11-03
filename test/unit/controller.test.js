@@ -39,7 +39,7 @@ function fakeBrowser() {
 }
 
 /** Mock Jev: keyword-driven answers, with configurable latency. */
-function mockDecide({ latency = 20, complete = (t) => (t.split(" ").length >= 2 ? 0.9 : 0.1) } = {}) {
+function mockDecide({ latency = 20, destructive = 0.02, complete = (t) => (t.split(" ").length >= 2 ? 0.9 : 0.1) } = {}) {
   const calls = [];
   const fn = async ({ transcript }, { signal } = {}) => {
     calls.push(transcript);
@@ -54,6 +54,7 @@ function mockDecide({ latency = 20, complete = (t) => (t.split(" ").length >= 2 
     let intent = ch("none", 0.9);
     let target = ch("none", 0.9);
     if (t.startsWith("go back")) intent = ch("go_back");
+    else if (t === "confirm" || t === "cancel") intent = ch(t);
     else if (t.startsWith("scroll")) intent = ch("scroll_down");
     else if (t.startsWith("click ambiguous")) {
       intent = ch("click_element");
@@ -69,7 +70,7 @@ function mockDecide({ latency = 20, complete = (t) => (t.split(" ").length >= 2 
         site: ch("none"),
         complete: { noul: complete(t) },
         is_command: { noul: intent.choice === "none" ? 0.1 : 0.95 },
-        destructive: { noul: 0.02 },
+        destructive: { noul: destructive },
         scroll_amount: { score: 1, confidence: 0.9, probabilities: {} },
         tab_direction: ch("none"),
       },
@@ -169,6 +170,32 @@ test("ambiguous target shows numbered candidates; a spoken number picks without 
   assert.equal(decideFn.calls.length, callsBefore, "no Jev call for the number");
   await c.close();
 });
+
+for (const resolution of ["confirm", "cancel"]) {
+  test(`destructive candidate pick waits for ${resolution}`, async (t) => {
+    const { c, executed, decideFn } = setup({ destructive: 0.95 });
+    t.after(() => c.close());
+    await c.start();
+    c.handleTranscript({ text: "click ambiguous thing", final: true, utteranceId: "danger" });
+    await sleep(150);
+    assert.ok(c.candidates);
+    const callsBefore = decideFn.calls.length;
+    c.handleTranscript({ text: "the second one", final: true, utteranceId: "pick" });
+    await sleep(100);
+    assert.equal(executed.length, 0, "choosing a target must not authorize the action");
+    assert.equal(c.pending.targetId, "e01");
+    assert.equal(c.candidates, null);
+    assert.equal(decideFn.calls.length, callsBefore, "number selection needs no extra model request");
+    c.handleTranscript({ text: resolution, final: true, utteranceId: "resolve" });
+    await sleep(150);
+    assert.equal(c.pending, null);
+    assert.equal(executed.length, resolution === "confirm" ? 1 : 0);
+    if (resolution === "confirm") {
+      assert.equal(executed[0].targetId, "e01");
+      assert.equal(executed[0].confirmed, true);
+    }
+  });
+}
 
 test("commands spoken in one breath: words after an executed command become a new command", async () => {
   const { c, executed } = setup();
