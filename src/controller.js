@@ -118,8 +118,17 @@ export class Controller extends EventEmitter {
         this._consume(this.utterance, clean);
         this._log("info", `picked candidate ${n} (${c.label}) by number — no model call`);
         const action = { ...this.candidates.intent, targetId: c.id, label: c.label };
+        const needsConfirmation = this.candidates.needsConfirmation;
         this.candidates = null;
-        this._runAction(action, { via: "candidate-pick" });
+        if (needsConfirmation) {
+          this.pending = action;
+          const summary = `say "confirm" to ${describe(action)}`;
+          this.browser.overlay("clearCandidates");
+          this.browser.overlay("toast", `Say "confirm" to ${describe(action)}`, 6000);
+          this.emit("pending", { action, summary });
+        } else {
+          this._runAction(action, { via: "candidate-pick" });
+        }
         return;
       }
     }
@@ -256,7 +265,12 @@ export class Controller extends EventEmitter {
         break;
       case "disambiguate": {
         const list = policy.candidates.map((c, i) => ({ n: i + 1, id: c.id, label: c.label, p: c.p }));
-        this.candidates = { list, intent: policy.pendingIntent, at: Date.now() };
+        this.candidates = {
+          list,
+          intent: policy.pendingIntent,
+          needsConfirmation: (result.answers.destructive?.noul ?? 0) >= T.destructive,
+          at: Date.now(),
+        };
         await this.browser.overlay("candidates", list, CANDIDATE_TTL_MS);
         await this.browser.overlay("toast", "Which one? Say the number.", 3000);
         this.emit("candidates", list);
